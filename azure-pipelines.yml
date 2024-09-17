@@ -1,0 +1,50 @@
+# Azure DevOps Pipeline YAML for Maven-based Java project
+
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- script: |
+    sudo apt-get update
+    sudo apt-get install -y openjdk-11-jdk
+    java -version
+  displayName: 'Install and Verify JDK 11'
+
+- task: Maven@4
+  inputs:
+    mavenPomFile: 'pom.xml'  # Path to your Maven POM file
+    mavenOptions: '-Xmx3072m'
+    goals: 'package'  # Maven goals to clean and package the project
+    publishJUnitResults: true  # Publish JUnit test results
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'  # Path to test result files
+    options: ''  # Remove -DskipTests=true if you want to run tests; otherwise, keep it if tests are not needed
+    javaHomeOption: 'JDKVersion'  # Use the JDK version defined in the previous task
+    mavenVersionOption: 'Default'  # Use the default Maven version
+    mavenAuthenticateFeed: false  # No authentication required for Maven feeds
+    effectivePomSkip: false  # Do not skip effective POM calculations
+    sonarQubeRunAnalysis: false  # Skip SonarQube analysis if not required
+  displayName: 'Build with Maven'
+  continueOnError: false  # Change to true if you want the pipeline to continue even if Maven build fails
+
+- script: |
+    # List files in the target directory to verify the WAR file is created
+    echo "Listing files in the target directory:"
+    ls -l $(Build.SourcesDirectory)/target
+  displayName: 'List files in target directory'
+
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(Build.SourcesDirectory)/target'  # Adjust to target directory where WAR file is located
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+    replaceExistingArchive: true
+  displayName: 'Archive WAR file'
+
+- publish: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+  displayName: 'Publish package'
+  artifact: drop
+

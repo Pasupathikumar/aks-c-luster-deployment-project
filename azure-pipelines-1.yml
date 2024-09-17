@@ -1,0 +1,85 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+jobs:
+- job: "deploy"
+  displayName: "Maven Build, Docker Push, and Deploy"
+  steps:
+
+  # Maven Build Step
+  - task: Maven@4
+    inputs:
+      mavenPomFile: 'pom.xml'
+      mavenOptions: '-Xmx3072m'
+      goals: 'package'
+      publishJUnitResults: true
+      testResultsFiles: '**/surefire-reports/TEST-*.xml'
+      options: ''
+      javaHomeOption: 'JDKVersion'
+      mavenVersionOption: 'Default'
+      mavenAuthenticateFeed: false
+      effectivePomSkip: false
+      sonarQubeRunAnalysis: false
+    displayName: 'Build with Maven'
+    continueOnError: false
+
+  # Build and Push Docker Image
+  - task: Docker@2
+    inputs:
+      containerRegistry: '<Your-service-connection>'  # Ensure this matches your Docker Registry service connection name
+      repository: '<Container-registry-name>/my-java-web-app'
+      command: 'buildAndPush'
+      Dockerfile: '**/Dockerfile'
+      tags: 'latest'
+    displayName: 'Build and Push Docker Image'
+
+  # Deploy to AKS
+  - task: KubernetesManifest@1
+    inputs:
+      action: 'deploy'
+      connectionType: 'azureResourceManager'
+      azureSubscriptionConnection: '<Your-service-connection>'  # Ensure this matches your Azure Resource Manager service connection name
+      azureResourceGroup: '<Resource-group-name>'
+      kubernetesCluster: '<AKS-Cluster-Name>'
+      manifests: 'deployment.yaml'
+    displayName: 'Deploy to AKS'
+
+  # Azure CLI Commands
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: '<Your-service-connection>'  # Ensure this is the correct service connection name
+      scriptType: 'bash'  # Changed to 'bash' for Linux agents
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        echo "Logging in to Azure..."
+        az login --service-principal -u $(azureSPUsername) -p $(azureSPPassword) --tenant $(azureTenantId)
+        
+        echo "Logging in to Azure Container Registry..."
+        az acr login --name <Container-registry-name>
+        
+        echo "Fetching AKS credentials..."
+        az aks get-credentials --resource-group <Resource-group-name> --name <AKS-Cluster-Name>
+
+        echo "Applying Kubernetes manifests..."
+        kubectl apply -f deployment.yaml
+        kubectl apply -f service.yaml
+        kubectl apply -f ingress.yaml
+
+        echo "Checking deployment status..."
+        kubectl get pods
+        kubectl get deployments
+        kubectl describe deployment my-java-web-app
+
+        echo "Describing service..."
+        kubectl describe service my-java-web-app-service
+
+        echo "Checking pod logs..."
+        POD_NAME=$(kubectl get pods --selector=app=my-java-web-app -o jsonpath='{.items[0].metadata.name}')
+        kubectl logs $POD_NAME
+
+        echo "Port forwarding..."
+        kubectl port-forward service/my-java-web-app-service 8080:8080
+    displayName: 'Azure CLI Commands'
